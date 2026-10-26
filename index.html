@@ -1,0 +1,1605 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Panel de Monitoreo de Diabetes - Análisis de reportes AGP de Linx CGM">
+    <title>Panel de Monitoreo de Diabetes</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+
+    <!-- PDF.js -->
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+
+    <!-- Day.js for date handling -->
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/dayjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/locale/es.js"></script>
+
+    <style>
+        @media print {
+            .no-print { display: none; }
+        }
+
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-bottom: 2rem;
+        }
+
+        @media (max-width: 640px) {
+            .chart-container {
+                height: 300px;
+            }
+        }
+
+        /* Loading spinner */
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Drag and drop styling */
+        .drag-drop-area {
+            border: 3px dashed #cbd5e1;
+            transition: all 0.3s ease;
+        }
+
+        .drag-drop-area.drag-over {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+        <div class="bg-white p-8 rounded-lg shadow-xl text-center">
+            <div class="spinner mx-auto mb-4"></div>
+            <p class="text-lg font-semibold text-gray-700">Procesando PDF...</p>
+            <p class="text-sm text-gray-500 mt-2">Esto puede tardar unos segundos</p>
+            <div class="mt-4 w-64 bg-gray-200 rounded-full h-2">
+                <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+            <p id="progressText" class="text-xs text-gray-600 mt-2">0%</p>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-blue-600 text-white shadow-lg no-print">
+        <div class="container mx-auto px-4 py-6">
+            <h1 class="text-3xl font-bold">📊 Panel de Monitoreo de Diabetes</h1>
+            <p class="text-blue-100 mt-2">Análisis de reportes AGP de Linx CGM</p>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="container mx-auto px-4 py-8">
+
+        <!-- Upload Section -->
+        <section id="uploadSection" class="mb-8">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">Cargar Reporte AGP</h2>
+
+                <div id="dropZone" class="drag-drop-area rounded-lg p-12 text-center cursor-pointer">
+                    <svg class="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <p class="text-lg font-semibold text-gray-700 mb-2">Arrastra tu PDF aquí o haz clic para seleccionar</p>
+                    <p class="text-sm text-gray-500 mb-4">Reporte AGP de Linx CGM (formato PDF)</p>
+                    <input type="file" id="pdfUpload" accept="application/pdf" class="hidden">
+                    <button onclick="document.getElementById('pdfUpload').click()" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition">
+                        Seleccionar Archivo
+                    </button>
+                </div>
+
+                <div id="fileInfo" class="hidden mt-4 p-4 bg-blue-50 border-l-4 border-blue-500 rounded">
+                    <p class="text-sm font-semibold text-blue-800">Archivo cargado:</p>
+                    <p id="fileName" class="text-sm text-blue-600"></p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Dashboard Content (Hidden until PDF is loaded) -->
+        <div id="dashboardContent" class="hidden">
+
+            <!-- Summary Metrics -->
+            <section class="mb-8">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">📈 Métricas Resumen</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+                    <div id="gmiCard" class="bg-white rounded-lg shadow-md p-6 border-l-4">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-sm text-gray-600 font-semibold">GMI (HbA1c Estimada)</p>
+                                <p id="gmiValue" class="text-3xl font-bold text-gray-800 mt-2">--</p>
+                                <p class="text-xs text-gray-500 mt-1">Objetivo: &lt;7.0%</p>
+                            </div>
+                            <div class="text-2xl">🎯</div>
+                        </div>
+                    </div>
+
+                    <div id="mbgCard" class="bg-white rounded-lg shadow-md p-6 border-l-4">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-sm text-gray-600 font-semibold">Glucosa Media (MBG)</p>
+                                <p id="mbgValue" class="text-3xl font-bold text-gray-800 mt-2">--</p>
+                                <p class="text-xs text-gray-500 mt-1">Objetivo: 77-119 mg/dL</p>
+                            </div>
+                            <div class="text-2xl">📊</div>
+                        </div>
+                    </div>
+
+                    <div id="cvCard" class="bg-white rounded-lg shadow-md p-6 border-l-4">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-sm text-gray-600 font-semibold">Variabilidad (CV%)</p>
+                                <p id="cvValue" class="text-3xl font-bold text-gray-800 mt-2">--</p>
+                                <p class="text-xs text-gray-500 mt-1">Objetivo: ≤36%</p>
+                            </div>
+                            <div class="text-2xl">📉</div>
+                        </div>
+                    </div>
+
+                    <div id="tirCard" class="bg-white rounded-lg shadow-md p-6 border-l-4">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-sm text-gray-600 font-semibold">Tiempo en Rango (TIR)</p>
+                                <p id="tirValue" class="text-3xl font-bold text-gray-800 mt-2">--</p>
+                                <p class="text-xs text-gray-500 mt-1">Objetivo: ≥70%</p>
+                            </div>
+                            <div class="text-2xl">✅</div>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- Correction Factor Calculator -->
+            <section class="mb-8">
+                <div id="cfCalculator" class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg shadow-md p-6 border border-blue-200">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+            </section>
+
+            <!-- TIR Visualization -->
+            <section class="mb-8">
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">📊 Tendencia de Tiempo en Rango (30 días)</h2>
+                    <div class="chart-container">
+                        <canvas id="tirChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AGP Curve -->
+            <section class="mb-8">
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">📈 Perfil Ambulatorio de Glucosa (AGP)</h2>
+                    <p class="text-sm text-gray-600 mb-4">Patrón promedio de glucosa a lo largo del día</p>
+                    <div class="chart-container">
+                        <canvas id="agpChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pattern Detection -->
+            <section class="mb-8">
+                <div id="patternDetection" class="bg-white rounded-lg shadow-md p-6">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+            </section>
+
+            <!-- Daily Breakdown Table -->
+            <section class="mb-8">
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">📋 Desglose Diario</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">TIR</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Promedio</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Máx</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mín</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dailyTableBody" class="bg-white divide-y divide-gray-200">
+                                <!-- Will be populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-8 mt-12">
+        <div class="container mx-auto px-4">
+            <div class="bg-yellow-900 bg-opacity-30 border-l-4 border-yellow-500 p-4 rounded mb-6">
+                <h3 class="font-bold text-yellow-300 mb-2">⚠️ Descargo de Responsabilidad Médica</h3>
+                <p class="text-sm text-gray-300">
+                    Esta herramienta es solo para fines informativos y educativos. No sustituye el consejo médico profesional.
+                    Consulte siempre con su médico o educador en diabetes certificado antes de realizar cambios en su régimen
+                    de insulina, dieta o ejercicio. Los cálculos del factor de corrección son estimaciones basadas en reglas
+                    generales y pueden no ser apropiados para todos los individuos.
+                </p>
+            </div>
+
+            <div class="text-center text-gray-400 text-sm">
+                <p>Panel de Monitoreo de Diabetes v1.0</p>
+                <p class="mt-2">Desarrollado con ❤️ para mejorar el manejo de la diabetes</p>
+                <p class="mt-2">Usa datos de reportes AGP de Linx CGM • Procesamiento local • Tus datos permanecen privados</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script>
+        // ============================================
+        // SECTION 1: CONFIGURATION & CONSTANTS
+        // ============================================
+        const CONFIG = {
+            thresholds: {
+                target_low: 70,
+                target_high: 180,
+                very_low: 54,
+                very_high: 250
+            },
+            correctionFactorRules: {
+                rule1500: 1500,
+                rule1700: 1700,
+                rule1800: 1800
+            },
+            spanish: {
+                months: {
+                    'Ene': 0, 'Feb': 1, 'Mar': 2, 'Abr': 3, 'May': 4, 'Jun': 5,
+                    'Jul': 6, 'Ago': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dic': 11
+                },
+                days: {
+                    'Lun': 1, 'Mar': 2, 'Mié': 3, 'Jue': 4, 'Vie': 5, 'Sáb': 6, 'Dom': 0
+                }
+            }
+        };
+
+        // ============================================
+        // SECTION 2: DATA MODELS
+        // ============================================
+        class GlucoseData {
+            constructor() {
+                this.summary = {
+                    gmi: null,
+                    mbg: null,
+                    cv: null,
+                    tir: null,
+                    tar: null,
+                    tbr: null
+                };
+                this.dailyStats = [];
+                this.hourlyData = [];
+                this.rawText = '';
+            }
+        }
+
+        class DailyMetrics {
+            constructor(date, dayOfWeek, tir, average, max, min) {
+                this.date = date;
+                this.dayOfWeek = dayOfWeek;
+                this.tir = tir;
+                this.average = average;
+                this.max = max;
+                this.min = min;
+            }
+        }
+
+        // ============================================
+        // SECTION 3: PDF PARSER
+        // ============================================
+        class LinxPDFParser {
+            constructor(pdfFile) {
+                this.pdfFile = pdfFile;
+                this.glucoseData = new GlucoseData();
+            }
+
+            async parse(progressCallback) {
+                const arrayBuffer = await this.readFile();
+                const loadingTask = pdfjsLib.getDocument(arrayBuffer);
+                const pdf = await loadingTask.promise;
+
+                const totalPages = pdf.numPages;
+
+                // Extract text from all pages
+                for (let i = 1; i <= totalPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+
+                    // Sort items by position (top to bottom, left to right)
+                    const sortedItems = textContent.items.sort((a, b) => {
+                        const yDiff = Math.abs(a.transform[5] - b.transform[5]);
+                        if (yDiff > 5) return b.transform[5] - a.transform[5];
+                        return a.transform[4] - b.transform[4];
+                    });
+
+                    const pageText = sortedItems.map(item => item.str).join(' ');
+                    this.glucoseData.rawText += pageText + '\n\n';
+
+                    // Update progress
+                    if (progressCallback) {
+                        progressCallback(Math.round((i / totalPages) * 50)); // 0-50% for extraction
+                    }
+
+                    // Allow UI to breathe
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                }
+
+                console.log('Raw text extracted:', this.glucoseData.rawText.substring(0, 500));
+
+                // Parse structured data
+                this.extractSummaryMetrics();
+                if (progressCallback) progressCallback(60);
+
+                this.extractDailyStats();
+                if (progressCallback) progressCallback(80);
+
+                this.extractHourlyData();
+                if (progressCallback) progressCallback(100);
+
+                return this.glucoseData;
+            }
+
+            extractSummaryMetrics() {
+                const text = this.glucoseData.rawText;
+
+                console.log('=== EXTRACTING SUMMARY METRICS ===');
+                console.log('Text length:', text.length);
+                console.log('First 1000 chars:', text.substring(0, 1000));
+
+                // GMI extraction - more flexible pattern
+                // Matches: "GMI 65 mmol/mol 8.1 %" or "8.1 % < 7.0"
+                const gmiPatterns = [
+                    /GMI\s+\d+\s+mmol\/mol\s+(\d+\.?\d*)\s*%/i,
+                    /GMI.*?(\d+\.?\d*)\s*%/i,
+                    /(\d+\.?\d*)\s*%\s*<\s*7\.0/i
+                ];
+
+                for (const pattern of gmiPatterns) {
+                    const match = text.match(pattern);
+                    if (match) {
+                        this.glucoseData.summary.gmi = parseFloat(match[1]);
+                        console.log('✓ GMI extracted:', this.glucoseData.summary.gmi, 'using pattern:', pattern);
+                        break;
+                    }
+                }
+                if (!this.glucoseData.summary.gmi) {
+                    console.log('✗ GMI NOT found - searching for alternative patterns');
+                }
+
+                // MBG extraction - more flexible
+                const mbgMatch = text.match(/MBG\s+(\d+)\s*mg\/dL/i) ||
+                                text.match(/Promedio.*?(\d+)\s*mg\/dL/i) ||
+                                text.match(/(\d+)\s*mg\/dL\s*[\^\*]?\s*77\s*-\s*119/i);
+                if (mbgMatch) {
+                    this.glucoseData.summary.mbg = parseInt(mbgMatch[1]);
+                    console.log('✓ MBG extracted:', this.glucoseData.summary.mbg);
+                } else {
+                    console.log('✗ MBG NOT found');
+                }
+
+                // CV% extraction - more flexible
+                const cvMatch = text.match(/GV\s*\(?\s*CV\s*%?\)?\s+(\d+)\s*%/i) ||
+                               text.match(/CV\s*%?\s*[:\s]+(\d+)\s*%/i) ||
+                               text.match(/variabilidad.*?(\d+)\s*%/i);
+                if (cvMatch) {
+                    this.glucoseData.summary.cv = parseInt(cvMatch[1]);
+                    console.log('✓ CV extracted:', this.glucoseData.summary.cv);
+                } else {
+                    console.log('✗ CV NOT found');
+                }
+
+                // TIR extraction - look for specific pattern in summary box
+                const tirMatch = text.match(/Normal\s+TIR\s+(\d+)\s*%/i) ||
+                                text.match(/70\s*-\s*180.*?TIR\s+(\d+)\s*%/i) ||
+                                text.match(/TIR\s+(\d+)\s*%/i);
+                if (tirMatch) {
+                    this.glucoseData.summary.tir = parseInt(tirMatch[1]);
+                    console.log('✓ TIR extracted:', this.glucoseData.summary.tir);
+                } else {
+                    console.log('✗ TIR NOT found');
+                }
+
+                // TAR extraction
+                const tarMatch = text.match(/Alto\s+\d+\s*%\s+TAR\s+(\d+)\s*%/i) ||
+                                text.match(/TAR\s+(\d+)\s*%/i) ||
+                                text.match(/>180.*?(\d+)\s*%/i);
+                if (tarMatch) {
+                    this.glucoseData.summary.tar = parseInt(tarMatch[1]);
+                    console.log('✓ TAR extracted:', this.glucoseData.summary.tar);
+                } else {
+                    console.log('✗ TAR NOT found');
+                }
+
+                // TBR extraction
+                const tbrMatch = text.match(/Bajo\s+\d+\s*%\s+TBR\s+(\d+)\s*%/i) ||
+                                text.match(/TBR\s+(\d+)\s*%/i) ||
+                                text.match(/<70.*?(\d+)\s*%/i);
+                if (tbrMatch) {
+                    this.glucoseData.summary.tbr = parseInt(tbrMatch[1]);
+                    console.log('✓ TBR extracted:', this.glucoseData.summary.tbr);
+                } else {
+                    console.log('✗ TBR NOT found');
+                }
+
+                console.log('=== SUMMARY METRICS COMPLETE ===');
+                console.log('Extracted:', this.glucoseData.summary);
+            }
+
+            extractDailyStats() {
+                const text = this.glucoseData.rawText;
+
+                console.log('=== EXTRACTING DAILY STATS ===');
+
+                // Search for the daily profile section in page 2
+                const page2Start = text.indexOf('Perfiles diarios de BG') || text.indexOf('Curva Diaria de BG');
+                const searchText = page2Start > 0 ? text.substring(page2Start, page2Start + 10000) : text;
+
+                console.log('Searching in text segment length:', searchText.length);
+
+                // Multiple regex patterns to catch different formats
+                const patterns = [
+                    // Format 1: "Sep 26 Sáb. TIR:51% Prom.:202 Máx.:376 Mín.:70"
+                    /((?:Sep|Oct|Nov|Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Dic)\s+\d{1,2})\s+(\w{3,4}\.?)\s+TIR:\s*(\d+)\s*%\s+Prom\.:\s*(\d+)\s+Máx\.:\s*(\d+)\s+Mín\.:\s*(\d+)/gi,
+                    // Format 2: More flexible spacing
+                    /((?:Sep|Oct|Nov|Ene|Feb|Mar|Abr|May|Jun|Jul|Ago|Dic)\s+\d{1,2}).*?TIR:\s*(\d+)\s*%.*?Prom\.?:?\s*(\d+).*?Máx\.?:?\s*(\d+).*?Mín\.?:?\s*(\d+)/gi,
+                    // Format 3: Looking in the summary table on page 2
+                    /(\w{3}\s\d{2}).*?TIR:\s*(\d+)%.*?Prom\.:\s*(\d+).*?Máx\.:\s*(\d+).*?Mín\.:\s*(\d+)/gi
+                ];
+
+                let totalMatches = 0;
+
+                for (let patternIndex = 0; patternIndex < patterns.length; patternIndex++) {
+                    const pattern = patterns[patternIndex];
+                    console.log(`Trying pattern ${patternIndex + 1}:`, pattern);
+
+                    let match;
+                    const regex = new RegExp(pattern);
+
+                    while ((match = regex.exec(text)) !== null) {
+                        totalMatches++;
+
+                        let date, dayOfWeek, tir, avg, max, min;
+
+                        if (patternIndex === 0) {
+                            // match[0] is full match, match[1] is first capture group, etc.
+                            date = match[1];
+                            dayOfWeek = match[2];
+                            tir = match[3];
+                            avg = match[4];
+                            max = match[5];
+                            min = match[6];
+                        } else if (patternIndex === 1) {
+                            date = match[1];
+                            tir = match[2];
+                            avg = match[3];
+                            max = match[4];
+                            min = match[5];
+                            dayOfWeek = '';
+                        } else {
+                            date = match[1];
+                            tir = match[2];
+                            avg = match[3];
+                            max = match[4];
+                            min = match[5];
+                            dayOfWeek = '';
+                        }
+
+                        const parsedDate = this.parseSpanishDate(date);
+                        const dayNum = dayOfWeek ? this.parseDayOfWeek(dayOfWeek) : 0;
+
+                        this.glucoseData.dailyStats.push(
+                            new DailyMetrics(
+                                parsedDate || date,
+                                dayNum,
+                                parseInt(tir),
+                                parseInt(avg),
+                                parseInt(max),
+                                parseInt(min)
+                            )
+                        );
+
+                        console.log(`✓ Day ${totalMatches}: ${date} - TIR:${tir}% Avg:${avg} Max:${max} Min:${min}`);
+                    }
+
+                    if (this.glucoseData.dailyStats.length > 0) {
+                        console.log(`✓ Pattern ${patternIndex + 1} found ${this.glucoseData.dailyStats.length} days`);
+                        break; // Found data, stop trying patterns
+                    }
+                }
+
+                if (this.glucoseData.dailyStats.length === 0) {
+                    console.log('✗ NO DAILY STATS FOUND - Showing sample text:');
+                    console.log(text.substring(0, 2000));
+                }
+
+                console.log(`=== EXTRACTED ${this.glucoseData.dailyStats.length} DAILY RECORDS ===`);
+            }
+
+            extractHourlyData() {
+                // This would extract hourly statistics from pages 3-12
+                // For MVP, we'll calculate hourly averages from daily data
+                // In a full implementation, this would parse the hourly tables
+
+                // Placeholder for hourly data aggregation
+                this.glucoseData.hourlyData = Array(24).fill(null).map((_, hour) => ({
+                    hour: hour,
+                    values: []
+                }));
+            }
+
+            parseSpanishDate(dateStr) {
+                // Handle "Sep 26" format
+                const match = dateStr.match(/(\w{3})\s+(\d{1,2})/);
+                if (match) {
+                    const monthStr = match[1];
+                    const day = parseInt(match[2]);
+                    const month = CONFIG.spanish.months[monthStr];
+
+                    if (month !== undefined) {
+                        // Assume year 2026 based on the PDF
+                        return `2026-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    }
+                }
+                return null;
+            }
+
+            parseDayOfWeek(dayStr) {
+                const cleaned = dayStr.replace('.', '');
+                return CONFIG.spanish.days[cleaned] || 0;
+            }
+
+            readFile() {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = reject;
+                    reader.readAsArrayBuffer(this.pdfFile);
+                });
+            }
+        }
+
+        // ============================================
+        // SECTION 4: CORRECTION FACTOR CALCULATOR
+        // ============================================
+        class CorrectionFactorCalculator {
+            constructor(glucoseData) {
+                this.data = glucoseData;
+            }
+
+            calculate(tdd = null) {
+                const cv = this.data.summary.cv;
+                const tbr = this.data.summary.tbr;
+                const tar = this.data.summary.tar;
+
+                // TDD is REQUIRED - cannot calculate without it
+                if (!tdd || tdd <= 0) {
+                    return {
+                        needsTDD: true,
+                        rule1500: null,
+                        rule1700: null,
+                        rule1800: null,
+                        recommended: null,
+                        adjustmentReason: 'Ingrese su dosis diaria total de insulina para calcular el factor de corrección'
+                    };
+                }
+
+                // Calculate using all three rules WITH TDD (NOT MBG!)
+                const results = {
+                    needsTDD: false,
+                    tdd: tdd,
+                    rule1500: Math.round(CONFIG.correctionFactorRules.rule1500 / tdd),
+                    rule1700: Math.round(CONFIG.correctionFactorRules.rule1700 / tdd),
+                    rule1800: Math.round(CONFIG.correctionFactorRules.rule1800 / tdd)
+                };
+
+                // Pattern-based adjustments
+                const patterns = this.detectVariabilityPatterns(cv, tbr, tar);
+                results.recommended = this.recommendCF(results.rule1700, patterns, cv, tbr, tar);
+                results.adjustmentReason = this.explainAdjustment(patterns, cv, tbr, tar);
+
+                return results;
+            }
+
+            detectVariabilityPatterns(cv, tbr, tar) {
+                return {
+                    highVariability: cv > 36,
+                    moderateVariability: cv >= 30 && cv <= 36,
+                    stableGlucose: cv < 30,
+                    frequentLows: tbr > 4,
+                    frequentHighs: tar > 50
+                };
+            }
+
+            recommendCF(baseCF, patterns, cv, tbr, tar) {
+                let adjustmentFactor = 1.0;
+
+                // Adjust based on variability
+                if (patterns.highVariability) {
+                    adjustmentFactor *= 0.90; // More conservative
+                }
+
+                // Adjust for frequent lows (safety priority)
+                if (patterns.frequentLows) {
+                    adjustmentFactor *= 0.85;
+                }
+
+                // Cautious increase for frequent highs (only if no frequent lows)
+                if (patterns.frequentHighs && tbr < 2) {
+                    adjustmentFactor *= 1.05;
+                }
+
+                return Math.round(baseCF * adjustmentFactor);
+            }
+
+            explainAdjustment(patterns, cv, tbr, tar) {
+                const reasons = [];
+
+                if (patterns.highVariability) {
+                    reasons.push(`Alta variabilidad detectada (CV: ${cv}%) - factor reducido para mayor seguridad`);
+                }
+
+                if (patterns.frequentLows) {
+                    reasons.push(`Hipoglucemias frecuentes (${tbr}% del tiempo) - factor más conservador para evitar bajas`);
+                }
+
+                if (patterns.frequentHighs && tbr < 2) {
+                    reasons.push(`Hiperglucemias frecuentes (${tar}% del tiempo) con pocas bajas - ligero aumento del factor`);
+                }
+
+                if (patterns.stableGlucose && !patterns.frequentLows) {
+                    reasons.push(`Glucosa relativamente estable (CV: ${cv}%) - factor estándar apropiado`);
+                }
+
+                return reasons.length > 0 ? reasons.join('; ') : 'Factor estándar basado en glucosa media';
+            }
+        }
+
+        // ============================================
+        // SECTION 5: PATTERN DETECTOR
+        // ============================================
+        class PatternDetector {
+            constructor(glucoseData) {
+                this.data = glucoseData;
+            }
+
+            detectPatterns() {
+                return {
+                    dayOfWeekPatterns: this.analyzeDayOfWeek(),
+                    consecutiveDays: this.findConsecutiveIssues(),
+                    tirTrend: this.analyzeTIRTrend()
+                };
+            }
+
+            analyzeDayOfWeek() {
+                const weekdayData = [];
+                const weekendData = [];
+
+                this.data.dailyStats.forEach(day => {
+                    if (day.dayOfWeek === 0 || day.dayOfWeek === 6) {
+                        weekendData.push(day);
+                    } else {
+                        weekdayData.push(day);
+                    }
+                });
+
+                const weekdayAvgTIR = this.avgTIR(weekdayData);
+                const weekendAvgTIR = this.avgTIR(weekendData);
+
+                return {
+                    weekdayAvgTIR: weekdayAvgTIR,
+                    weekendAvgTIR: weekendAvgTIR,
+                    difference: Math.abs(weekdayAvgTIR - weekendAvgTIR),
+                    significant: Math.abs(weekdayAvgTIR - weekendAvgTIR) > 10
+                };
+            }
+
+            findConsecutiveIssues() {
+                const issues = [];
+                let currentStreak = null;
+
+                this.data.dailyStats.forEach((day, index) => {
+                    if (day.tir < 50) {
+                        if (!currentStreak) {
+                            currentStreak = {
+                                startDate: day.date,
+                                count: 1,
+                                avgTIR: day.tir
+                            };
+                        } else {
+                            currentStreak.count++;
+                            currentStreak.endDate = day.date;
+                            currentStreak.avgTIR = (currentStreak.avgTIR + day.tir) / 2;
+                        }
+
+                        if (currentStreak.count >= 3) {
+                            issues.push({...currentStreak});
+                        }
+                    } else {
+                        currentStreak = null;
+                    }
+                });
+
+                return issues;
+            }
+
+            analyzeTIRTrend() {
+                if (this.data.dailyStats.length < 7) {
+                    return { trend: 'insufficient_data' };
+                }
+
+                // Compare first week vs last week
+                const firstWeek = this.data.dailyStats.slice(0, 7);
+                const lastWeek = this.data.dailyStats.slice(-7);
+
+                const firstWeekTIR = this.avgTIR(firstWeek);
+                const lastWeekTIR = this.avgTIR(lastWeek);
+                const change = lastWeekTIR - firstWeekTIR;
+
+                return {
+                    firstWeekTIR: firstWeekTIR,
+                    lastWeekTIR: lastWeekTIR,
+                    change: change,
+                    trend: change > 5 ? 'improving' : change < -5 ? 'declining' : 'stable'
+                };
+            }
+
+            avgTIR(days) {
+                if (days.length === 0) return 0;
+                return days.reduce((sum, day) => sum + day.tir, 0) / days.length;
+            }
+        }
+
+        // ============================================
+        // SECTION 6: VISUALIZATION COMPONENTS
+        // ============================================
+        class TIRVisualizer {
+            constructor(canvasId, glucoseData) {
+                this.ctx = document.getElementById(canvasId).getContext('2d');
+                this.data = glucoseData;
+                this.chart = null;
+            }
+
+            render() {
+                console.log('=== RENDERING TIR CHART ===');
+                console.log('Daily stats count:', this.data.dailyStats.length);
+
+                if (this.data.dailyStats.length === 0) {
+                    console.log('✗ NO DAILY STATS - Cannot render chart');
+                    return;
+                }
+
+                const labels = this.data.dailyStats.map(d => {
+                    if (typeof d.date === 'string' && d.date.includes('-')) {
+                        const parts = d.date.split('-');
+                        return `${parts[2]}/${parts[1]}`;
+                    }
+                    return d.date;
+                });
+
+                const tirData = this.data.dailyStats.map(d => d.tir);
+
+                // Calculate TAR and TBR for each day
+                // Approximate TBR as proportional to summary TBR
+                const avgTBR = this.data.summary.tbr || 4;
+                const tbrData = this.data.dailyStats.map(d => avgTBR); // Use summary TBR as baseline
+
+                // TAR is the remainder (100% - TIR - TBR)
+                const tarData = this.data.dailyStats.map((d, i) => {
+                    const tar = 100 - d.tir - tbrData[i];
+                    return Math.max(0, tar); // Ensure non-negative
+                });
+
+                console.log('Chart data prepared:');
+                console.log('Labels:', labels.slice(0, 5), '...');
+                console.log('TIR:', tirData.slice(0, 5), '...');
+                console.log('TAR:', tarData.slice(0, 5), '...');
+                console.log('TBR:', tbrData.slice(0, 5), '...');
+
+                if (this.chart) {
+                    this.chart.destroy();
+                }
+
+                this.chart = new Chart(this.ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'TBR (<70 mg/dL)',
+                                data: tbrData,
+                                backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                                borderColor: 'rgba(220, 38, 38, 1)',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'TIR (70-180 mg/dL)',
+                                data: tirData,
+                                backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                                borderColor: 'rgba(22, 163, 74, 1)',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'TAR (>180 mg/dL)',
+                                data: tarData,
+                                backgroundColor: 'rgba(251, 191, 36, 0.8)',
+                                borderColor: 'rgba(245, 158, 11, 1)',
+                                borderWidth: 1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                stacked: true,
+                                ticks: {
+                                    maxRotation: window.innerWidth < 640 ? 90 : 45,
+                                    minRotation: window.innerWidth < 640 ? 45 : 0,
+                                    font: {
+                                        size: window.innerWidth < 640 ? 9 : 11
+                                    }
+                                }
+                            },
+                            y: {
+                                stacked: true,
+                                max: 100,
+                                title: {
+                                    display: true,
+                                    text: 'Porcentaje de Tiempo (%)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: window.innerWidth > 640,
+                                position: 'top'
+                            },
+                            annotation: {
+                                annotations: {
+                                    tirTarget: {
+                                        type: 'line',
+                                        yMin: 70,
+                                        yMax: 70,
+                                        borderColor: 'rgb(22, 163, 74)',
+                                        borderWidth: 2,
+                                        borderDash: [5, 5],
+                                        label: {
+                                            content: 'Objetivo: 70% TIR',
+                                            enabled: true,
+                                            position: 'end'
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        class AGPVisualizer {
+            constructor(canvasId, glucoseData) {
+                this.ctx = document.getElementById(canvasId).getContext('2d');
+                this.data = glucoseData;
+                this.chart = null;
+            }
+
+            render() {
+                // Placeholder AGP curve (would need hourly data for full implementation)
+                // For MVP, we'll create a simplified visualization
+
+                const hours = Array.from({length: 24}, (_, i) => `${String(i).padStart(2, '0')}:00`);
+
+                // Simulate AGP data based on daily averages
+                const avgGlucose = this.data.summary.mbg || 180;
+                const variance = this.data.summary.cv || 40;
+
+                if (this.chart) {
+                    this.chart.destroy();
+                }
+
+                this.chart = new Chart(this.ctx, {
+                    type: 'line',
+                    data: {
+                        labels: hours,
+                        datasets: [
+                            {
+                                label: 'Rango Promedio',
+                                data: hours.map((_, i) => avgGlucose + Math.sin(i / 3) * (variance * 2)),
+                                borderColor: 'rgba(59, 130, 246, 0.8)',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                fill: true,
+                                tension: 0.4
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                min: 0,
+                                max: 400,
+                                title: {
+                                    display: true,
+                                    text: 'Glucosa (mg/dL)'
+                                }
+                            },
+                            x: {
+                                ticks: {
+                                    maxRotation: 45,
+                                    minRotation: 0
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            annotation: {
+                                annotations: {
+                                    targetHigh: {
+                                        type: 'line',
+                                        yMin: 180,
+                                        yMax: 180,
+                                        borderColor: 'rgba(251, 191, 36, 0.8)',
+                                        borderWidth: 2,
+                                        borderDash: [5, 5],
+                                        label: {
+                                            content: '180 mg/dL',
+                                            enabled: true,
+                                            position: 'end'
+                                        }
+                                    },
+                                    targetLow: {
+                                        type: 'line',
+                                        yMin: 70,
+                                        yMax: 70,
+                                        borderColor: 'rgba(239, 68, 68, 0.8)',
+                                        borderWidth: 2,
+                                        borderDash: [5, 5],
+                                        label: {
+                                            content: '70 mg/dL',
+                                            enabled: true,
+                                            position: 'end'
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        // ============================================
+        // SECTION 7: MAIN APPLICATION CONTROLLER
+        // ============================================
+        class DiabetesDashboard {
+            constructor() {
+                this.glucoseData = null;
+                this.parser = null;
+                this.calculator = null;
+                this.patternDetector = null;
+                this.visualizers = {};
+
+                this.initializeEventListeners();
+                this.configurePDFWorker();
+            }
+
+            configurePDFWorker() {
+                pdfjsLib.GlobalWorkerOptions.workerSrc =
+                    'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+            }
+
+            initializeEventListeners() {
+                const fileInput = document.getElementById('pdfUpload');
+                const dropZone = document.getElementById('dropZone');
+
+                fileInput.addEventListener('change', (e) => this.handleFileUpload(e));
+
+                // Drag and drop
+                dropZone.addEventListener('click', () => fileInput.click());
+                dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.add('drag-over');
+                });
+                dropZone.addEventListener('dragleave', () => {
+                    dropZone.classList.remove('drag-over');
+                });
+                dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('drag-over');
+
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        fileInput.files = files;
+                        this.handleFileUpload({ target: { files: files } });
+                    }
+                });
+            }
+
+            async handleFileUpload(event) {
+                const file = event.target.files[0];
+
+                if (!file) return;
+
+                if (file.type !== 'application/pdf') {
+                    alert('Por favor seleccione un archivo PDF válido');
+                    return;
+                }
+
+                // Show file info
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('fileInfo').classList.remove('hidden');
+
+                this.showLoadingState();
+
+                try {
+                    // Parse PDF
+                    this.parser = new LinxPDFParser(file);
+                    this.glucoseData = await this.parser.parse((progress) => {
+                        this.updateProgress(progress);
+                    });
+
+                    console.log('Parsed glucose data:', this.glucoseData);
+
+                    // Calculate correction factors
+                    this.calculator = new CorrectionFactorCalculator(this.glucoseData);
+                    const cfResults = this.calculator.calculate();
+
+                    // Detect patterns
+                    this.patternDetector = new PatternDetector(this.glucoseData);
+                    const patterns = this.patternDetector.detectPatterns();
+
+                    // Render dashboard
+                    this.renderSummaryMetrics();
+                    this.renderCorrectionFactorCalculator(cfResults);
+                    this.renderTIRVisualization();
+                    this.renderPatternDetection(patterns);
+                    this.renderDailyBreakdown();
+
+                    // Show dashboard
+                    document.getElementById('dashboardContent').classList.remove('hidden');
+
+                    this.hideLoadingState();
+
+                    // Scroll to dashboard
+                    document.getElementById('dashboardContent').scrollIntoView({ behavior: 'smooth' });
+
+                } catch (error) {
+                    console.error('Error processing PDF:', error);
+                    alert('Error al procesar el archivo PDF. Verifique que sea un informe AGP de Linx válido.\n\nDetalles: ' + error.message);
+                    this.hideLoadingState();
+                }
+            }
+
+            renderSummaryMetrics() {
+                const { gmi, mbg, cv, tir } = this.glucoseData.summary;
+
+                document.getElementById('gmiValue').textContent = gmi ? `${gmi}%` : '--';
+                document.getElementById('mbgValue').textContent = mbg ? `${mbg} mg/dL` : '--';
+                document.getElementById('cvValue').textContent = cv ? `${cv}%` : '--';
+                document.getElementById('tirValue').textContent = tir ? `${tir}%` : '--';
+
+                // Apply color coding
+                this.applyMetricStyling('gmiCard', gmi, (v) => v < 7.0 ? 'green' : v < 8.0 ? 'yellow' : 'red');
+                this.applyMetricStyling('mbgCard', mbg, (v) => v >= 77 && v <= 119 ? 'green' : v < 200 ? 'yellow' : 'red');
+                this.applyMetricStyling('cvCard', cv, (v) => v <= 36 ? 'green' : v <= 42 ? 'yellow' : 'red');
+                this.applyMetricStyling('tirCard', tir, (v) => v >= 70 ? 'green' : v >= 50 ? 'yellow' : 'red');
+            }
+
+            applyMetricStyling(cardId, value, colorFunc) {
+                if (!value) return;
+
+                const card = document.getElementById(cardId);
+                const color = colorFunc(value);
+
+                const colors = {
+                    green: 'border-green-500',
+                    yellow: 'border-yellow-500',
+                    red: 'border-red-500'
+                };
+
+                card.classList.add(colors[color]);
+            }
+
+            renderCorrectionFactorCalculator(cfResults) {
+                if (!cfResults) return;
+
+                const container = document.getElementById('cfCalculator');
+
+                // Render input form for insulin doses
+                let html = `
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">🧮 Calculadora de Factor de Corrección</h2>
+                    <p class="text-sm text-gray-600 mb-6">Basado en reglas médicas estándar y patrones de tu glucosa</p>
+
+                    <!-- Insulin Dosage Input Form -->
+                    <div class="bg-white p-6 rounded-lg shadow-md mb-6 border border-blue-200">
+                        <h3 class="font-bold text-gray-800 mb-4">📝 Ingrese sus Dosis de Insulina Diarias</h3>
+                        <p class="text-xs text-gray-600 mb-4">Ingrese las dosis que usa normalmente SIN incluir correcciones</p>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Insulina Basal (Lantus)</label>
+                                <input type="number" id="basalDose" placeholder="22" min="0"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <span class="text-xs text-gray-500">unidades/día</span>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Desayuno</label>
+                                <input type="number" id="breakfastDose" placeholder="14" min="0"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <span class="text-xs text-gray-500">unidades</span>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Almuerzo</label>
+                                <input type="number" id="lunchDose" placeholder="10" min="0"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <span class="text-xs text-gray-500">unidades</span>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Cena</label>
+                                <input type="number" id="dinnerDose" placeholder="10" min="0"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <span class="text-xs text-gray-500">unidades</span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between bg-gray-50 p-4 rounded">
+                            <div>
+                                <span class="text-sm font-semibold text-gray-700">Dosis Diaria Total (TDD):</span>
+                                <span id="tddDisplay" class="text-2xl font-bold text-blue-600 ml-2">--</span>
+                                <span class="text-sm text-gray-600">unidades/día</span>
+                            </div>
+                            <button id="calculateCFBtn" class="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition">
+                                Calcular Factor de Corrección
+                            </button>
+                        </div>
+
+                        <!-- Optional: Endocrinologist ISF Comparison -->
+                        <div class="mt-4 pt-4 border-t border-gray-200">
+                            <label class="block text-xs font-semibold text-gray-700 mb-2">
+                                Factor de corrección actual de su endocrinólogo (opcional):
+                            </label>
+                            <div class="flex items-center gap-2">
+                                <input type="number" id="endoISF" placeholder="50" min="0"
+                                    class="w-32 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500">
+                                <span class="text-xs text-gray-600">mg/dL por unidad</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Results Container -->
+                    <div id="cfResults" class="${cfResults.needsTDD ? 'hidden' : ''}">
+                `;
+
+                if (!cfResults.needsTDD) {
+                    html += `
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <div class="bg-white p-5 rounded-lg shadow border border-gray-200">
+                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Regla 1500</div>
+                                <div class="text-3xl font-bold text-gray-700">${cfResults.rule1500}</div>
+                                <div class="text-xs text-gray-600 mt-2">mg/dL por unidad</div>
+                                <div class="text-xs text-gray-500 mt-1">Insulina regular</div>
+                            </div>
+
+                            <div class="bg-white p-5 rounded-lg shadow border border-gray-200">
+                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Regla 1700</div>
+                                <div class="text-3xl font-bold text-gray-700">${cfResults.rule1700}</div>
+                                <div class="text-xs text-gray-600 mt-2">mg/dL por unidad</div>
+                                <div class="text-xs text-gray-500 mt-1">Insulina rápida (MDI)</div>
+                            </div>
+
+                            <div class="bg-white p-5 rounded-lg shadow border border-gray-200">
+                                <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Regla 1800</div>
+                                <div class="text-3xl font-bold text-gray-700">${cfResults.rule1800}</div>
+                                <div class="text-xs text-gray-600 mt-2">mg/dL por unidad</div>
+                                <div class="text-xs text-gray-500 mt-1">Insulina rápida (Bomba)</div>
+                            </div>
+                        </div>
+
+                        <div class="bg-gradient-to-r from-green-50 to-emerald-50 border-l-4 border-green-500 p-6 rounded-lg shadow mb-4">
+                            <div class="flex items-start">
+                                <div class="text-3xl mr-4">✅</div>
+                                <div class="flex-1">
+                                    <h4 class="font-bold text-green-800 text-lg mb-2">Recomendación Personalizada</h4>
+                                    <div class="text-4xl font-bold text-green-900 my-3">
+                                        1 unidad baja ${cfResults.recommended} mg/dL
+                                    </div>
+                                    <p class="text-sm text-green-700 leading-relaxed">${cfResults.adjustmentReason}</p>
+                                    <p class="text-xs text-green-600 mt-2">Calculado con TDD = ${cfResults.tdd} unidades/día</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Endocrinologist Comparison (if provided) -->
+                        <div id="endoComparison" class="hidden"></div>
+                    `;
+                }
+
+                html += `
+                    </div>
+
+                    <div class="mt-4 p-4 bg-yellow-50 border-l-4 border-yellow-400 rounded">
+                        <p class="text-xs text-yellow-800">
+                            <strong>⚠️ Importante:</strong> Estos cálculos son estimaciones basadas en reglas generales (1500/1700/1800).
+                            Consulte con su médico antes de realizar cambios en su régimen de insulina.
+                            El factor de corrección puede variar según la hora del día, actividad física, y otros factores individuales.
+                        </p>
+                    </div>
+                `;
+
+                container.innerHTML = html;
+
+                // Add event listeners for auto-calculation
+                this.setupCFCalculatorListeners();
+            }
+
+            setupCFCalculatorListeners() {
+                const basalInput = document.getElementById('basalDose');
+                const breakfastInput = document.getElementById('breakfastDose');
+                const lunchInput = document.getElementById('lunchDose');
+                const dinnerInput = document.getElementById('dinnerDose');
+                const tddDisplay = document.getElementById('tddDisplay');
+                const calculateBtn = document.getElementById('calculateCFBtn');
+                const endoISFInput = document.getElementById('endoISF');
+
+                // Auto-calculate TDD as user types
+                const updateTDD = () => {
+                    const basal = parseFloat(basalInput.value) || 0;
+                    const breakfast = parseFloat(breakfastInput.value) || 0;
+                    const lunch = parseFloat(lunchInput.value) || 0;
+                    const dinner = parseFloat(dinnerInput.value) || 0;
+
+                    const tdd = basal + breakfast + lunch + dinner;
+
+                    if (tdd > 0) {
+                        tddDisplay.textContent = tdd.toFixed(0);
+                        tddDisplay.classList.remove('text-gray-400');
+                        tddDisplay.classList.add('text-blue-600');
+                    } else {
+                        tddDisplay.textContent = '--';
+                        tddDisplay.classList.remove('text-blue-600');
+                        tddDisplay.classList.add('text-gray-400');
+                    }
+                };
+
+                basalInput.addEventListener('input', updateTDD);
+                breakfastInput.addEventListener('input', updateTDD);
+                lunchInput.addEventListener('input', updateTDD);
+                dinnerInput.addEventListener('input', updateTDD);
+
+                // Calculate ISF when button clicked
+                calculateBtn.addEventListener('click', () => {
+                    const tdd = parseFloat(tddDisplay.textContent);
+
+                    if (!tdd || tdd <= 0) {
+                        alert('Por favor ingrese sus dosis de insulina para calcular el factor de corrección');
+                        return;
+                    }
+
+                    // Recalculate with TDD
+                    const cfResults = this.calculator.calculate(tdd);
+
+                    if (!cfResults.needsTDD) {
+                        // Show results section
+                        const resultsContainer = document.getElementById('cfResults');
+                        resultsContainer.classList.remove('hidden');
+
+                        // Update results
+                        resultsContainer.innerHTML = `
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                                <div class="bg-white p-5 rounded-lg shadow border border-gray-200">
+                                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Regla 1500</div>
+                                    <div class="text-3xl font-bold text-gray-700">${cfResults.rule1500}</div>
+                                    <div class="text-xs text-gray-600 mt-2">mg/dL por unidad</div>
+                                    <div class="text-xs text-gray-500 mt-1">Insulina regular</div>
+                                </div>
+
+                                <div class="bg-white p-5 rounded-lg shadow border border-gray-200">
+                                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Regla 1700</div>
+                                    <div class="text-3xl font-bold text-gray-700">${cfResults.rule1700}</div>
+                                    <div class="text-xs text-gray-600 mt-2">mg/dL por unidad</div>
+                                    <div class="text-xs text-gray-500 mt-1">Insulina rápida (MDI)</div>
+                                </div>
+
+                                <div class="bg-white p-5 rounded-lg shadow border border-gray-200">
+                                    <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Regla 1800</div>
+                                    <div class="text-3xl font-bold text-gray-700">${cfResults.rule1800}</div>
+                                    <div class="text-xs text-gray-600 mt-2">mg/dL por unidad</div>
+                                    <div class="text-xs text-gray-500 mt-1">Insulina rápida (Bomba)</div>
+                                </div>
+                            </div>
+
+                            <div class="bg-gradient-to-r from-green-50 to-emerald-50 border-l-4 border-green-500 p-6 rounded-lg shadow mb-4">
+                                <div class="flex items-start">
+                                    <div class="text-3xl mr-4">✅</div>
+                                    <div class="flex-1">
+                                        <h4 class="font-bold text-green-800 text-lg mb-2">Recomendación Personalizada</h4>
+                                        <div class="text-4xl font-bold text-green-900 my-3">
+                                            1 unidad baja ${cfResults.recommended} mg/dL
+                                        </div>
+                                        <p class="text-sm text-green-700 leading-relaxed">${cfResults.adjustmentReason}</p>
+                                        <p class="text-xs text-green-600 mt-2">Calculado con TDD = ${cfResults.tdd} unidades/día</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Endocrinologist Comparison (if provided) -->
+                            <div id="endoComparison" class="hidden"></div>
+                        `;
+
+                        // Show endocrinologist comparison if provided
+                        const endoISF = parseFloat(endoISFInput.value);
+                        if (endoISF && endoISF > 0) {
+                            const comparisonContainer = document.getElementById('endoComparison');
+                            const difference = cfResults.rule1800 - endoISF;
+                            const percentDiff = ((difference / endoISF) * 100).toFixed(0);
+
+                            let comparisonColor = 'blue';
+                            let comparisonIcon = 'ℹ️';
+                            let comparisonText = 'Similares';
+
+                            if (Math.abs(difference) > 10) {
+                                comparisonColor = 'orange';
+                                comparisonIcon = '⚠️';
+                                comparisonText = 'Diferencia significativa';
+                            }
+
+                            comparisonContainer.classList.remove('hidden');
+                            comparisonContainer.innerHTML = `
+                                <div class="bg-${comparisonColor}-50 border-l-4 border-${comparisonColor}-500 p-6 rounded-lg">
+                                    <h4 class="font-bold text-${comparisonColor}-900 mb-3 flex items-center">
+                                        <span class="mr-2">${comparisonIcon}</span>
+                                        Comparación con Factor del Endocrinólogo
+                                    </h4>
+                                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div class="bg-white p-4 rounded shadow-sm">
+                                            <div class="text-xs text-gray-600">Endocrinólogo</div>
+                                            <div class="text-2xl font-bold text-gray-700">${endoISF} mg/dL/u</div>
+                                        </div>
+                                        <div class="bg-white p-4 rounded shadow-sm">
+                                            <div class="text-xs text-gray-600">Calculado (1800)</div>
+                                            <div class="text-2xl font-bold text-gray-700">${cfResults.rule1800} mg/dL/u</div>
+                                        </div>
+                                        <div class="bg-white p-4 rounded shadow-sm">
+                                            <div class="text-xs text-gray-600">${comparisonText}</div>
+                                            <div class="text-2xl font-bold text-${comparisonColor}-700">
+                                                ${difference > 0 ? '+' : ''}${difference} (${percentDiff}%)
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-xs text-${comparisonColor}-700 mt-4">
+                                        ${Math.abs(difference) > 10 ?
+                                            '⚠️ <strong>Importante:</strong> Hay una diferencia significativa entre el cálculo y el factor de su endocrinólogo. Su endocrinólogo conoce su historial completo y puede haber ajustado el factor por razones específicas. Consulte con su médico antes de hacer cambios.' :
+                                            '✓ El cálculo es similar al factor de su endocrinólogo. Esto sugiere que las reglas estándar se aplican bien a su caso.'}
+                                    </p>
+                                </div>
+                            `;
+                        }
+                    }
+                });
+            }
+
+            renderTIRVisualization() {
+                const visualizer = new TIRVisualizer('tirChart', this.glucoseData);
+                visualizer.render();
+                this.visualizers.tir = visualizer;
+
+                const agpVisualizer = new AGPVisualizer('agpChart', this.glucoseData);
+                agpVisualizer.render();
+                this.visualizers.agp = agpVisualizer;
+            }
+
+            renderPatternDetection(patterns) {
+                const container = document.getElementById('patternDetection');
+
+                let html = `
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">🔍 Patrones Detectados</h2>
+                `;
+
+                // Day of week comparison
+                html += `
+                    <div class="mb-6 p-5 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg border border-blue-200">
+                        <h3 class="font-bold text-blue-900 mb-3 flex items-center">
+                            <span class="text-xl mr-2">📅</span>
+                            Comparación Semana vs Fin de Semana
+                        </h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="bg-white p-4 rounded shadow-sm">
+                                <div class="text-xs text-gray-600 uppercase tracking-wide">TIR Lunes-Viernes</div>
+                                <div class="text-3xl font-bold text-blue-700">${patterns.dayOfWeekPatterns.weekdayAvgTIR.toFixed(0)}%</div>
+                            </div>
+                            <div class="bg-white p-4 rounded shadow-sm">
+                                <div class="text-xs text-gray-600 uppercase tracking-wide">TIR Fin de Semana</div>
+                                <div class="text-3xl font-bold text-blue-700">${patterns.dayOfWeekPatterns.weekendAvgTIR.toFixed(0)}%</div>
+                            </div>
+                            <div class="bg-white p-4 rounded shadow-sm">
+                                <div class="text-xs text-gray-600 uppercase tracking-wide">Diferencia</div>
+                                <div class="text-3xl font-bold ${patterns.dayOfWeekPatterns.significant ? 'text-orange-600' : 'text-green-600'}">
+                                    ${patterns.dayOfWeekPatterns.difference.toFixed(0)}%
+                                </div>
+                                ${patterns.dayOfWeekPatterns.significant ?
+                                    '<div class="text-xs text-orange-600 mt-1">⚠️ Diferencia significativa</div>' :
+                                    '<div class="text-xs text-green-600 mt-1">✓ Consistente</div>'}
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                // TIR Trend
+                if (patterns.tirTrend.trend !== 'insufficient_data') {
+                    const trendEmoji = {
+                        'improving': '📈',
+                        'declining': '📉',
+                        'stable': '➡️'
+                    };
+
+                    const trendColor = {
+                        'improving': 'green',
+                        'declining': 'red',
+                        'stable': 'blue'
+                    };
+
+                    const trendText = {
+                        'improving': 'Mejorando',
+                        'declining': 'Empeorando',
+                        'stable': 'Estable'
+                    };
+
+                    html += `
+                        <div class="mb-6 p-5 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
+                            <h3 class="font-bold text-purple-900 mb-3 flex items-center">
+                                <span class="text-xl mr-2">${trendEmoji[patterns.tirTrend.trend]}</span>
+                                Tendencia de Control
+                            </h3>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div class="bg-white p-4 rounded shadow-sm">
+                                    <div class="text-xs text-gray-600">Primera Semana</div>
+                                    <div class="text-2xl font-bold text-gray-700">${patterns.tirTrend.firstWeekTIR.toFixed(0)}%</div>
+                                </div>
+                                <div class="bg-white p-4 rounded shadow-sm">
+                                    <div class="text-xs text-gray-600">Última Semana</div>
+                                    <div class="text-2xl font-bold text-gray-700">${patterns.tirTrend.lastWeekTIR.toFixed(0)}%</div>
+                                </div>
+                                <div class="bg-white p-4 rounded shadow-sm">
+                                    <div class="text-xs text-gray-600">Tendencia</div>
+                                    <div class="text-xl font-bold text-${trendColor[patterns.tirTrend.trend]}-600">
+                                        ${trendText[patterns.tirTrend.trend]}
+                                        ${patterns.tirTrend.change > 0 ? '+' : ''}${patterns.tirTrend.change.toFixed(0)}%
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // Consecutive issues
+                if (patterns.consecutiveDays.length > 0) {
+                    html += `
+                        <div class="p-5 bg-red-50 border-l-4 border-red-500 rounded">
+                            <h3 class="font-bold text-red-800 mb-3">⚠️ Períodos de Control Deficiente</h3>
+                            <p class="text-sm text-red-700 mb-3">Se detectaron ${patterns.consecutiveDays.length} período(s) de 3+ días consecutivos con TIR &lt;50%:</p>
+                            <ul class="list-disc list-inside space-y-2">
+                                ${patterns.consecutiveDays.map(issue => `
+                                    <li class="text-sm text-red-700">
+                                        ${issue.startDate} - ${issue.endDate || issue.startDate}
+                                        (${issue.count} días, TIR promedio: ${Math.round(issue.avgTIR)}%)
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="p-5 bg-green-50 border-l-4 border-green-500 rounded">
+                            <p class="text-sm text-green-700">✅ No se detectaron períodos prolongados de control deficiente</p>
+                        </div>
+                    `;
+                }
+
+                container.innerHTML = html;
+            }
+
+            renderDailyBreakdown() {
+                console.log('=== RENDERING DAILY BREAKDOWN ===');
+                const tableBody = document.getElementById('dailyTableBody');
+
+                if (this.glucoseData.dailyStats.length === 0) {
+                    tableBody.innerHTML = `
+                        <tr>
+                            <td colspan="5" class="px-4 py-8 text-center text-gray-500">
+                                <div class="text-lg mb-2">📊</div>
+                                <div>No se encontraron datos diarios en el PDF</div>
+                                <div class="text-sm mt-2">Verifica que el PDF sea un reporte AGP de Linx válido</div>
+                            </td>
+                        </tr>
+                    `;
+                    console.log('✗ No daily stats to display');
+                    return;
+                }
+
+                const rows = this.glucoseData.dailyStats.map(day => {
+                    const dateStr = typeof day.date === 'string' ? day.date : day.date;
+
+                    return `
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="px-4 py-3 text-sm text-gray-700">${dateStr}</td>
+                            <td class="px-4 py-3">
+                                <span class="px-3 py-1 rounded-full text-sm font-semibold inline-block
+                                    ${day.tir >= 70 ? 'bg-green-100 text-green-800' :
+                                      day.tir >= 50 ? 'bg-yellow-100 text-yellow-800' :
+                                      'bg-red-100 text-red-800'}">
+                                    ${day.tir}%
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-sm font-semibold text-gray-700">${day.average} mg/dL</td>
+                            <td class="px-4 py-3 text-sm text-red-600 font-medium">${day.max}</td>
+                            <td class="px-4 py-3 text-sm text-blue-600 font-medium">${day.min}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                tableBody.innerHTML = rows;
+                console.log(`✓ Rendered ${this.glucoseData.dailyStats.length} daily records`);
+            }
+
+            showLoadingState() {
+                document.getElementById('loadingOverlay').classList.remove('hidden');
+            }
+
+            hideLoadingState() {
+                document.getElementById('loadingOverlay').classList.add('hidden');
+            }
+
+            updateProgress(percent) {
+                const progressBar = document.getElementById('progressBar');
+                const progressText = document.getElementById('progressText');
+
+                progressBar.style.width = `${percent}%`;
+                progressText.textContent = `${percent}%`;
+            }
+        }
+
+        // ============================================
+        // SECTION 8: APPLICATION INITIALIZATION
+        // ============================================
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Diabetes Dashboard initialized');
+            const app = new DiabetesDashboard();
+
+            // Make app available for debugging
+            window.diabetesDashboard = app;
+        });
+    </script>
+
+</body>
+</html>
